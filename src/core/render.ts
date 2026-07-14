@@ -41,9 +41,27 @@ import {
   ATLAS_GRAY_WIDE_FLAGS as JBM10_GRAY_WIDE_FLAGS,
   atlasGrayRank as jbMono10GrayRank,
 } from './atlas-gray-jbmono10.js';
+import {
+  ATLAS_CELL_W as JBM9_CELL_W,
+  ATLAS_CELL_H as JBM9_CELL_H,
+  ATLAS_ASCENT as JBM9_ASCENT,
+  ATLAS_PIXELS as JBM9_PIXELS,
+  ATLAS_OFFSETS as JBM9_OFFSETS,
+  ATLAS_WIDE_FLAGS as JBM9_WIDE_FLAGS,
+  atlasRank as jbMono9Rank,
+} from './atlas-jbmono9.js';
+import {
+  ATLAS_GRAY_CELL_W as JBM9_GRAY_CELL_W,
+  ATLAS_GRAY_CELL_H as JBM9_GRAY_CELL_H,
+  ATLAS_GRAY_ASCENT as JBM9_GRAY_ASCENT,
+  ATLAS_GRAY_PIXELS as JBM9_GRAY_PIXELS,
+  ATLAS_GRAY_OFFSETS as JBM9_GRAY_OFFSETS,
+  ATLAS_GRAY_WIDE_FLAGS as JBM9_GRAY_WIDE_FLAGS,
+  atlasGrayRank as jbMono9GrayRank,
+} from './atlas-gray-jbmono9.js';
 import { encodeGrayPng, encodeRgbPng } from './png.js';
 
-export type RenderFont = 'spleen-5x8' | 'jetbrains-mono-10';
+export type RenderFont = 'spleen-5x8' | 'jetbrains-mono-10' | 'jetbrains-mono-9';
 
 /** Render font selection. PXPIPE_RENDER_FONT=jetbrains-mono-10 switches every
  *  rendered page to the JetBrains Mono 10px atlas (larger cells — fewer chars
@@ -51,9 +69,9 @@ export type RenderFont = 'spleen-5x8' | 'jetbrains-mono-10';
  *  is guarded so the module stays loadable on Cloudflare Workers (no process). */
 function envRenderFont(): RenderFont {
   const v = typeof process !== 'undefined' ? process.env?.PXPIPE_RENDER_FONT : undefined;
-  if (v === 'jetbrains-mono-10' || v === 'spleen-5x8') return v;
+  if (v === 'jetbrains-mono-10' || v === 'jetbrains-mono-9' || v === 'spleen-5x8') return v;
   if (v !== undefined && v !== '') {
-    console.error(`[pxpipe] unknown PXPIPE_RENDER_FONT: ${v} (expected spleen-5x8 | jetbrains-mono-10)`);
+    console.error(`[pxpipe] unknown PXPIPE_RENDER_FONT: ${v} (expected spleen-5x8 | jetbrains-mono-10 | jetbrains-mono-9)`);
   }
   return 'spleen-5x8';
 }
@@ -126,8 +144,32 @@ const JBM10_ATLAS: AtlasSet = {
   },
 };
 
+const JBM9_ATLAS: AtlasSet = {
+  bit: {
+    cellW: JBM9_CELL_W,
+    cellH: JBM9_CELL_H,
+    ascent: JBM9_ASCENT,
+    pixels: JBM9_PIXELS,
+    offsets: JBM9_OFFSETS,
+    wideFlags: JBM9_WIDE_FLAGS,
+    rank: jbMono9Rank,
+  },
+  gray: {
+    cellW: JBM9_GRAY_CELL_W,
+    cellH: JBM9_GRAY_CELL_H,
+    ascent: JBM9_GRAY_ASCENT,
+    pixels: JBM9_GRAY_PIXELS,
+    offsets: JBM9_GRAY_OFFSETS,
+    wideFlags: JBM9_GRAY_WIDE_FLAGS,
+    rank: jbMono9GrayRank,
+  },
+};
+
 function atlasSet(font: RenderFont | undefined): AtlasSet {
-  return font === 'jetbrains-mono-10' ? JBM10_ATLAS : DEFAULT_ATLAS;
+  const resolved = font ?? DEFAULT_RENDER_FONT;
+  if (resolved === 'jetbrains-mono-10') return JBM10_ATLAS;
+  if (resolved === 'jetbrains-mono-9') return JBM9_ATLAS;
+  return DEFAULT_ATLAS;
 }
 
 function bitGlyph(codepoint: number, font: RenderFont | undefined): { atlas: BitAtlas; rank: number } | null {
@@ -1095,16 +1137,17 @@ const MAX_WIDTH_PX = 1568;
 const GUTTER_DIVIDER_INK = 64; // pre-invert → 191 post-invert: light gray column separator
 const GUTTER_DIVIDER_INSET_PX = 2; // keep divider clear of padding rows
 
-/** Pixel width of a multi-col canvas. */
-export function multiColWidth(cols: number, numCols: number): number {
+/** Pixel width of a multi-col canvas. rowNumCells reserves a per-column row-number
+ *  gutter (digits + ':') so the model can re-anchor rows across columns. 0 = off. */
+export function multiColWidth(cols: number, numCols: number, rowNumCells = 0): number {
   const n = Math.max(1, numCols | 0);
-  return 2 * PAD_X + n * cols * CELL_W + (n - 1) * GUTTER_CELLS * CELL_W;
+  return 2 * PAD_X + n * (rowNumCells + cols) * CELL_W + (n - 1) * GUTTER_CELLS * CELL_W;
 }
 
 /** Largest numCols fitting within MAX_WIDTH_PX. Used to clamp over-large CLI flags. */
-export function maxFittingCols(cols: number): number {
+export function maxFittingCols(cols: number, rowNumCells = 0): number {
   let n = 1;
-  while (multiColWidth(cols, n + 1) <= MAX_WIDTH_PX) n++;
+  while (multiColWidth(cols, n + 1, rowNumCells) <= MAX_WIDTH_PX) n++;
   return n;
 }
 
@@ -1114,8 +1157,10 @@ async function renderMultiColChunkFromLines(
   numCols: number,
   charsCovered: number,
   linesPerCol: number,
+  baseRow = 0,
+  rowNumCells = 0,
 ): Promise<RenderedImage> {
-  const width = multiColWidth(cols, numCols);
+  const width = multiColWidth(cols, numCols, rowNumCells);
   // Column 0 is always the tallest in column-major packing.
   const rowsPerCol = Math.max(1, linesPerCol | 0);
   const usedRows = Math.min(lines.length, rowsPerCol);
@@ -1125,15 +1170,25 @@ async function renderMultiColChunkFromLines(
   let droppedChars = 0;
   const droppedCodepoints = new Map<number, number>();
 
-  const colStride = cols * CELL_W + GUTTER_CELLS * CELL_W; // pixel stride per column including gutter
+  // pixel stride per column including row-number gutter and divider gutter
+  const colStride = (rowNumCells + cols) * CELL_W + GUTTER_CELLS * CELL_W;
   for (let c = 0; c < numCols; c++) {
-    const colBaseX = PAD_X + c * colStride;
+    const colBaseX = PAD_X + c * colStride + rowNumCells * CELL_W;
     const colStart = c * rowsPerCol;
     if (colStart >= lines.length) break;
     const colEnd = Math.min(colStart + rowsPerCol, lines.length);
     for (let r = 0; r < colEnd - colStart; r++) {
       const line = lines[colStart + r]!;
       const baseY = PAD_Y + r * CELL_H;
+      if (rowNumCells > 0) {
+        // Per-column row label `NNN:` — absolute wrapped-row index, 1-based, right-aligned.
+        const label = String(baseRow + colStart + r + 1).padStart(rowNumCells - 1) + ':';
+        let lc = 0;
+        for (const ch of label) {
+          const adv = blitGlyph(fb, width, PAD_X + c * colStride + lc * CELL_W, baseY, ch.codePointAt(0)!);
+          lc += Math.max(1, adv);
+        }
+      }
       let col = 0;
       for (const ch of line) {
         if (col >= cols) break;
@@ -1185,6 +1240,7 @@ export async function renderTextToPngsMultiCol(
   text: string,
   cols: number = DEFAULT_COLS,
   numCols: number = 2,
+  opts?: { rowNumbers?: boolean },
 ): Promise<RenderedImage[]> {
   if (numCols <= 1) return renderTextToPngs(text, cols);
   if (multiColWidth(cols, numCols) > MAX_WIDTH_PX) {
@@ -1194,8 +1250,21 @@ export async function renderTextToPngsMultiCol(
   }
 
   const lines = wrapLines(text, cols);
+  // Row-number gutter width: digits of the last wrapped-row index + ':'. Constant across
+  // pages so every page of one render shares identical column geometry.
+  const rowNumCells = opts?.rowNumbers ? String(lines.length).length + 1 : 0;
+  if (rowNumCells > 0 && multiColWidth(cols, numCols, rowNumCells) > MAX_WIDTH_PX) {
+    numCols = maxFittingCols(cols, rowNumCells);
+    if (numCols <= 1) return renderTextToPngs(text, cols);
+  }
   const hardLinesPerImg = Math.max(1, Math.floor((MAX_HEIGHT_PX - 2 * PAD_Y) / CELL_H));
   const linesPerImg = Math.min(hardLinesPerImg, readableLinesPerColumn(cols));
+  // Collapse columns that can never receive a row: short (often reflow-merged) content
+  // must not render empty columns + dividers at full multi-col canvas width.
+  numCols = Math.min(numCols, Math.max(1, Math.ceil(lines.length / linesPerImg)));
+  // numCols may now be 1; keep the chunk path when row numbers were requested (the
+  // renderTextToPngs delegate has no gutter), otherwise preserve byte-identical delegation.
+  if (numCols <= 1 && rowNumCells === 0) return renderTextToPngs(text, cols);
   const linesPerImage = linesPerImg * numCols;
 
   // Total source codepoints; assigned to the last image to ensure counts sum exactly.
@@ -1204,6 +1273,7 @@ export async function renderTextToPngsMultiCol(
 
   const images: RenderedImage[] = [];
   let coveredChars = 0;
+  let baseRow = 0;
   const pages = splitWrappedLinesIntoReadablePages(
     lines,
     linesPerImage,
@@ -1222,7 +1292,10 @@ export async function renderTextToPngsMultiCol(
       chars = n;
     }
     coveredChars += chars;
-    images.push(await renderMultiColChunkFromLines(slice, cols, numCols, chars, linesPerImg));
+    images.push(
+      await renderMultiColChunkFromLines(slice, cols, numCols, chars, linesPerImg, baseRow, rowNumCells),
+    );
+    baseRow += slice.length;
   }
   return images;
 }
@@ -1232,9 +1305,10 @@ export async function renderTextToPngsReflowMultiCol(
   text: string,
   cols: number = DEFAULT_COLS,
   numCols: number = 2,
+  opts?: { rowNumbers?: boolean },
 ): Promise<RenderedImage[]> {
   const packed = reflow(text);
-  return renderTextToPngsMultiCol(packed ?? text, cols, numCols);
+  return renderTextToPngsMultiCol(packed ?? text, cols, numCols, opts);
 }
 
 export interface RenderDensePagesOptions {
@@ -1256,6 +1330,9 @@ export interface RenderDensePagesOptions {
   readonly style?: RenderStyle;
   /** Max page height in px. Default MAX_HEIGHT_PX. */
   readonly maxHeightPx?: number;
+  /** Per-column row-number gutter (`NNN:`) on multi-col renders. Row-anchoring aid;
+   *  no effect when the render collapses to a single column. Default false. */
+  readonly rowNumbers?: boolean;
 }
 
 /**
@@ -1290,6 +1367,6 @@ export async function renderDensePages(
   const maxChars = opts.maxCharsPerImage ?? DENSE_CONTENT_CHARS_PER_IMAGE;
   const maxHeightPx = opts.maxHeightPx ?? MAX_HEIGHT_PX;
   return numCols > 1
-    ? renderTextToPngsMultiCol(source, cols, numCols)
+    ? renderTextToPngsMultiCol(source, cols, numCols, { rowNumbers: opts.rowNumbers })
     : renderTextToPngsWithCharLimit(source, cols, maxChars, style, maxHeightPx);
 }

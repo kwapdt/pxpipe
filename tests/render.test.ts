@@ -178,7 +178,10 @@ describe('renderer', () => {
   });
 
   it('multi-col emits a wider canvas with the predicted dimensions', async () => {
-    const text = ('lorem ipsum dolor sit amet\n'.repeat(8)) + 'final line';
+    // Must be row-heavy enough to genuinely fill both columns: sparse input
+    // now collapses to fewer columns via shrinkColsToContent (see the
+    // 'sparse log shrinks to content width' test for that contract).
+    const text = ('lorem ipsum dolor sit amet\n'.repeat(500)) + 'final line';
     const single = await renderTextToPngs(text, 100);
     const two = await renderTextToPngsMultiCol(text, 100, 2);
     // numCols=2 with 100-col text content + 4-cell gutter at 5px/cell (5×8 production cell):
