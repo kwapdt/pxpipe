@@ -17,6 +17,7 @@ import {
   PAD_Y,
   READABLE_CHARS_PER_IMAGE,
   type RenderedImage,
+  INDENT_CRUSH,
 } from './render.js';
 import {
   resolveGptProfile,
@@ -838,7 +839,10 @@ export async function transformOpenAIChatCompletions(
   // Portrait strip only — multi-col would exceed 768px → downscale.
   const numCols = 1;
   const reflowNote = o.reflow
-    ? ' The glyph ↵ (U+21B5) marks an original hard line break in content; treat it as a real newline.'
+    ? ' The glyph ↵ (U+21B5) marks an original hard line break in content; treat it as a real newline.' +
+      (INDENT_CRUSH
+        ? ' Each leading → (U+2192) marks one collapsed indent level (4 spaces or 1 tab); leftover leading spaces under 4 are literal.'
+        : '')
     : '';
   const header = CHAT_HEADER.replace('\n====', reflowNote + '\n====');
   const renderedText = prepareImagedRenderText(header + combined, o.reflow);
@@ -1058,7 +1062,10 @@ export async function transformOpenAIResponses(
   }
 
   const reflowNote = o.reflow
-    ? ' The glyph ↵ (U+21B5) marks an original hard line break in content; treat it as a real newline.'
+    ? ' The glyph ↵ (U+21B5) marks an original hard line break in content; treat it as a real newline.' +
+      (INDENT_CRUSH
+        ? ' Each leading → (U+2192) marks one collapsed indent level (4 spaces or 1 tab); leftover leading spaces under 4 are literal.'
+        : '')
     : '';
   const header = RESPONSES_HEADER.replace('\n====', reflowNote + '\n====');
   const renderedText = prepareImagedRenderText(header + combined, o.reflow);

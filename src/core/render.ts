@@ -44,7 +44,20 @@ import {
 import { encodeGrayPng, encodeRgbPng } from './png.js';
 
 export type RenderFont = 'spleen-5x8' | 'jetbrains-mono-10';
-export const DEFAULT_RENDER_FONT: RenderFont = 'spleen-5x8';
+
+/** Render font selection. PXPIPE_RENDER_FONT=jetbrains-mono-10 switches every
+ *  rendered page to the JetBrains Mono 10px atlas (larger cells — fewer chars
+ *  per image, but distinct l/I/1 and dotted-zero glyphs cut misreads). Env read
+ *  is guarded so the module stays loadable on Cloudflare Workers (no process). */
+function envRenderFont(): RenderFont {
+  const v = typeof process !== 'undefined' ? process.env?.PXPIPE_RENDER_FONT : undefined;
+  if (v === 'jetbrains-mono-10' || v === 'spleen-5x8') return v;
+  if (v !== undefined && v !== '') {
+    console.error(`[pxpipe] unknown PXPIPE_RENDER_FONT: ${v} (expected spleen-5x8 | jetbrains-mono-10)`);
+  }
+  return 'spleen-5x8';
+}
+export const DEFAULT_RENDER_FONT: RenderFont = envRenderFont();
 
 interface BitAtlas {
   cellW: number;
@@ -430,14 +443,42 @@ export function roleSlotSegment(tag: string, body: string, mark: string, attr = 
   return `${mark.repeat(open.length)}\n${slotCopyBody(body)}\n${mark.repeat(close.length)}`;
 }
 
-/** Minify + tab-expand + join lines with ↵ sentinel. Returns null if text already
- *  contains ↵ (caller falls back to non-reflow path; vanishingly rare in practice). */
+/** Leading-indent crush (port of code_render.py `_pack_line`). Each leading indent
+ *  LEVEL — one 4-space group OR one leading tab — collapses to a single '→'
+ *  (1 cell), so depth stays visible at 1 cell/level instead of 4. Leftover leading
+ *  spaces that don't fill a group of 4 are left AS-IS (a 2-space codebase, or
+ *  continuation alignment under an open paren, must not be misrepresented as
+ *  levels). Mid-line whitespace is DATA and never collapsed; mid-line tabs keep
+ *  the →+padding expansion. Opt-in via PXPIPE_INDENT_CRUSH=1 — deliberate
+ *  divergence from stock reflow, which preserves leading indent verbatim. */
+export const INDENT_CRUSH: boolean =
+  typeof process !== 'undefined' && process.env?.PXPIPE_INDENT_CRUSH === '1';
+const LEADING_INDENT_RE = /^(?: {4}|\t)+/;
+const INDENT_GUTTER_RE = /^\s*\d+\s*[:|]\s/;
+export function crushLeadingIndent(line: string, gutter = false): string {
+  let prefix = '';
+  let rest = line;
+  if (gutter) {
+    const gm = INDENT_GUTTER_RE.exec(line);
+    if (gm) {
+      prefix = gm[0];
+      rest = line.slice(gm[0].length);
+    }
+  }
+  const m = LEADING_INDENT_RE.exec(rest);
+  if (!m) return prefix + rest;
+  const levels = (m[0].match(/ {4}|\t/g) ?? []).length;
+  return prefix + '→'.repeat(levels) + rest.slice(m[0].length);
+}
+
+/** Minify + optional indent-crush + tab-expand + join lines with ↵ sentinel.
+ *  Returns null if text already contains ↵ (caller falls back to non-reflow
+ *  path; vanishingly rare in practice). */
 export function reflow(text: string): string | null {
   if (text.indexOf(NL_SENTINEL) >= 0) return null;
-  return minifyForRender(text)
-    .split('\n')
-    .map(expandTabsInLine)
-    .join(NL_SENTINEL);
+  let lines = minifyForRender(text).split('\n');
+  if (INDENT_CRUSH) lines = lines.map((l) => crushLeadingIndent(l));
+  return lines.map(expandTabsInLine).join(NL_SENTINEL);
 }
 
 /** Inverse of reflow: ↵ → '\n'. dereflow(reflow(text)) === minifyForRender(text) with tabs expanded. */

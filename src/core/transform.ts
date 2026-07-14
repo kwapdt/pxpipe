@@ -34,6 +34,7 @@ import {
   DENSE_RENDER_STYLE,
   ANTHROPIC_SLAB_COLS,
   renderTextToPngsWithCharLimit,
+  INDENT_CRUSH,
 } from './render.js';
 import { factSheetText } from './factsheet.js';
 import { stripSchemaDescriptions, schemaHasStructure } from './schema-strip.js';
@@ -1880,7 +1881,10 @@ export async function transformRequest(
   // Shrink canvas to longest actual line — pure function of (text, cols) so the
   // cache prefix stays byte-identical across turns. The banner sets a natural width floor.
   const reflowNoteImg = o.reflow
-    ? ' The glyph ↵ (U+21B5) marks an original hard line break in content — treat as a real newline.'
+    ? ' The glyph ↵ (U+21B5) marks an original hard line break in content — treat as a real newline.' +
+      (INDENT_CRUSH
+        ? ' Each leading → (U+2192) marks one collapsed indent level (4 spaces or 1 tab); leftover leading spaces under 4 are literal.'
+        : '')
     : '';
   const columnNoteImg =
     numCols > 1
